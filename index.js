@@ -3,7 +3,7 @@ const cors = require("cors");
 const app = express();
 require('dotenv').config();
 const port = process.env.PORT || 5000;
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 // middleware
 app.use(express.json());
@@ -35,9 +35,22 @@ async function run() {
             res.send(result);
         })
 
-        // All tickets get Api
+        // // All tickets get Api
+        // app.get("/tickets", async (req, res) => {
+        //     const cursor = ticketsCollection.find({});
+        //     const result = await cursor.toArray();
+        //     res.send(result);
+        // })
+
+        // tickets get api by email
         app.get("/tickets", async (req, res) => {
-            const cursor = ticketsCollection.find({});
+            const query = {}
+            const { email } = req.query;
+            if (email) {
+                query.vendorEmail = email;
+            }
+
+            const cursor = ticketsCollection.find(query);
             const result = await cursor.toArray();
             res.send(result);
         })
@@ -45,9 +58,10 @@ async function run() {
         // tickets get api by id
         app.get("/tickets/:id", async (req, res) => {
             const id = req.params.id;
-            const result = await ticketsCollection.findOne({ _id: new ObjectId(id) });
-            res.send(result);
-        });
+            const query = { _id: new ObjectId(id) };
+            const result = await ticketsCollection.findOne(query);
+            res.send(result)
+        })
 
 
         // Send a ping to confirm a successful connection

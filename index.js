@@ -4,6 +4,8 @@ const app = express();
 require('dotenv').config();
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_SECRET);
+
 
 // middleware
 app.use(express.json());
@@ -110,6 +112,50 @@ async function run() {
         })
 
         // my booked tickets get api
+        app.get("/ticket-booked", async (req, res) => {
+            const query = {}
+            const { email } = req.query;
+            if (email) {
+                query.userEmail = email;
+            }
+            const cursor = bookedTicketCollection.find(query);
+            const result = await cursor.toArray();
+            res.send(result);
+        })
+
+        // Accept booking
+        app.patch("/requested-bookings/:id/accept", async (req, res) => {
+            const id = req.params.id;
+            const result = await bookedTicketCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { status: "accepted" } }
+            );
+            // Optionally update bookedTicketCollection too
+            const requested = await bookedTicketCollection.findOne({ _id: new ObjectId(id) });
+            await bookedTicketCollection.updateOne(
+                { _id: new ObjectId(requested.ticketId) },
+                { $set: { status: "accepted" } }
+            );
+            res.send(result);
+        });
+
+        // Reject booking
+        app.patch("/requested-bookings/:id/reject", async (req, res) => {
+            const id = req.params.id;
+            const result = await bookedTicketCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { status: "rejected" } }
+            );
+            const requested = await bookedTicketCollection.findOne({ _id: new ObjectId(id) });
+            await bookedTicketCollection.updateOne(
+                { _id: new ObjectId(requested.ticketId) },
+                { $set: { status: "rejected" } }
+            );
+            res.send(result);
+        });
+
+
+        // payment related api 
         
 
 

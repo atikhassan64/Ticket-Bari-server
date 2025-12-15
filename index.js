@@ -217,62 +217,130 @@ async function run() {
         })
 
         // payment success 
+        // app.patch("/payment-success", async (req, res) => {
+        //     const sessionId = req.query.session_id;
+        //     const session = await stripe.checkout.sessions.retrieve(sessionId);
+        //     // console.log("session retrieve : ", session);
+
+        //     const transactionId = session.payment_intent;
+        //     const query = { transactionId: transactionId }
+        //     const paymentExist = await paymentCollection.findOne(query);
+        //     if (paymentExist) {
+        //         return res.send({
+        //             message: "already exist",
+        //             transactionId: transactionId,
+        //             trackingId: paymentExist.trackingId
+        //         })
+        //     }
+
+        //     const trackingId = generateTrackingId();
+
+        //     if (session.payment_status === "paid") {
+        //         const id = session.metadata.ticketId;
+        //         const query = { _id: new ObjectId(id) };
+        //         const update = {
+        //             $set: {
+        //                 status: "paid",
+        //                 trackingId: trackingId
+        //             }
+        //         }
+        //         const result = await bookedTicketCollection.updateOne(query, update);
+
+        //         const payment = {
+        //             amount: session.amount_total / 100,
+        //             currency: session.currency,
+        //             customerEmail: session.customer_email,
+        //             ticketId: session.metadata.ticketId,
+        //             ticketTitle: session.metadata.ticketTitle,
+        //             transactionId: session.payment_intent,
+        //             paymentStatus: session.payment_status,
+        //             paidAt: new Date(),
+        //             trackingId: trackingId
+        //         }
+
+        //         if (session.payment_status === "paid") {
+        //             const resultPayment = await paymentCollection.insertOne(payment);
+        //             res.send({
+        //                 success: true,
+        //                 modifyTicket: result,
+        //                 trackingId: trackingId,
+        //                 transactionId: session.payment_intent,
+        //                 paymentInfo: resultPayment
+        //             })
+        //         }
+
+
+        //     }
+
+        //     return res.send({ success: false })
+        // })
+
         app.patch("/payment-success", async (req, res) => {
             const sessionId = req.query.session_id;
             const session = await stripe.checkout.sessions.retrieve(sessionId);
-            console.log("session retrieve : ", session);
 
-            const transactionId = session.payment_intent;
-            const query = { transactionId: transactionId }
-            const paymentExist = await paymentCollection.findOne(query);
-            if (paymentExist) {
-                return res.send({ 
-                    message: "already exist", 
-                    transactionId: transactionId,
-                    trackingId: paymentExist.trackingId
-                 })
+            if (session.payment_status !== "paid") {
+                return res.send({ success: false });
             }
+
+            const ticketId = session.metadata.ticketId;
+            const transactionId = session.payment_intent;
 
             const trackingId = generateTrackingId();
 
-            if (session.payment_status === "paid") {
-                const id = session.metadata.ticketId;
-                const query = { _id: new ObjectId(id) };
-                const update = {
+            // ✅ ATOMIC update (ONLY if not already paid)
+            const updateResult = await bookedTicketCollection.updateOne(
+                {
+                    _id: new ObjectId(ticketId),
+                    status: { $ne: "paid" }   // 🔥 KEY LINE
+                },
+                {
                     $set: {
                         status: "paid",
                         trackingId: trackingId
                     }
                 }
-                const result = await bookedTicketCollection.updateOne(query, update);
+            );
 
-                const payment = {
-                    amount: session.amount_total / 100,
-                    currency: session.currency,
-                    customerEmail: session.customer_email,
-                    ticketId: session.metadata.ticketId,
-                    ticketTitle: session.metadata.ticketTitle,
-                    transactionId: session.payment_intent,
-                    paymentStatus: session.payment_status,
-                    paidAt: new Date(),
-                    trackingId: trackingId
-                }
-
-                if (session.payment_status === "paid") {
-                    const resultPayment = await paymentCollection.insertOne(payment);
-                    res.send({
-                        success: true,
-                        modifyTicket: result,
-                        trackingId: trackingId,
-                        transactionId: session.payment_intent,
-                        paymentInfo: resultPayment
-                    })
-                }
-
-                
+            if (updateResult.matchedCount === 0) {
+                const existingPayment = await paymentCollection.findOne({ transactionId });
+                return res.send({
+                    message: "already processed",
+                    transactionId,
+                    trackingId: existingPayment?.trackingId
+                });
             }
 
-            return res.send({ success: false })
+            await paymentCollection.insertOne({
+                amount: session.amount_total / 100,
+                currency: session.currency,
+                customerEmail: session.customer_email,
+                ticketId: ticketId,
+                ticketTitle: session.metadata.ticketTitle,
+                transactionId: transactionId,
+                paymentStatus: session.payment_status,
+                paidAt: new Date(),
+                trackingId: trackingId
+            });
+
+            res.send({
+                success: true,
+                transactionId,
+                trackingId
+            });
+        });
+
+
+        // payment get related api
+        app.get("/payments", async (req, res) => {
+            const email = req.query.email;
+            const query = {}
+            if (email) {
+                query.customerEmail = email
+            }
+            const cursor = paymentCollection.find(query);
+            const result = await cursor.toArray();
+            res.send(result);
         })
 
 

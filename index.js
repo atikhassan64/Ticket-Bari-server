@@ -2,9 +2,19 @@ const express = require("express");
 const cors = require("cors");
 const app = express();
 require('dotenv').config();
-const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET);
+const port = process.env.PORT || 5000;
+
+const crypto = require("crypto");
+
+function generateTrackingId() {
+    const prefix = "PRCL";
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const random = crypto.randomBytes(3).toString("hex").toUpperCase();
+
+    return `${prefix}-${date}-${random}`;
+}
 
 
 // middleware
@@ -31,12 +41,14 @@ async function run() {
         const userCollection = db.collection("users");
         const ticketsCollection = db.collection("tickets");
         const bookedTicketCollection = db.collection("bookedTickets");
+        const paymentCollection = db.collection("payments");
 
         // user post related Api
         app.post("/users", async (req, res) => {
             const user = req.body;
             user.role = "user";
             user.createAt = new Date();
+            user.isFraud = false;
             const email = user.email;
             const userExists = await userCollection.findOne({ email });
             if (userExists) {
@@ -46,6 +58,20 @@ async function run() {
             const result = await userCollection.insertOne(user);
             res.send(result);
         })
+
+        // user get related api
+        app.get("/users/:email", async (req, res) => {
+            const email = req.params.email;
+            const user = await userCollection.findOne({ email });
+
+            if (!user) {
+                return res.status(404).send({ message: "User not found" });
+            }
+
+            res.send(user);
+        })
+
+
 
         // tickets post Api
         app.post("/tickets", async (req, res) => {
@@ -156,7 +182,98 @@ async function run() {
 
 
         // payment related api 
-        
+        app.post("/payment", async (req, res) => {
+            const paymentInfo = req.body;
+            // const amount = parseInt(paymentInfo.totalPrice);
+            // const amount = Math.round(parseFloat(paymentInfo.totalPrice));
+            const amount = Math.round(parseFloat(paymentInfo.totalPrice) * 100);
+            const quantity = parseInt(paymentInfo.bookingQty);
+
+            const session = await stripe.checkout.sessions.create({
+                line_items: [
+                    {
+                        // Provide the exact Price ID (for example, price_1234) of the product you want to sell
+                        price_data: {
+                            currency: "usd",
+                            unit_amount: amount,
+                            product_data: {
+                                name: paymentInfo.ticketTitle
+                            }
+                        },
+                        quantity: quantity,
+                    },
+                ],
+                customer_email: paymentInfo.userEmail,
+                mode: 'payment',
+                metadata: {
+                    ticketId: paymentInfo.ticketId,
+                    ticketTitle: paymentInfo.ticketTitle
+                },
+                success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+            })
+
+            res.send({ url: session.url })
+        })
+
+        // payment success 
+        app.patch("/payment-success", async (req, res) => {
+            const sessionId = req.query.session_id;
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+            console.log("session retrieve : ", session);
+
+            const transactionId = session.payment_intent;
+            const query = { transactionId: transactionId }
+            const paymentExist = await paymentCollection.findOne(query);
+            if (paymentExist) {
+                return res.send({ 
+                    message: "already exist", 
+                    transactionId: transactionId,
+                    trackingId: paymentExist.trackingId
+                 })
+            }
+
+            const trackingId = generateTrackingId();
+
+            if (session.payment_status === "paid") {
+                const id = session.metadata.ticketId;
+                const query = { _id: new ObjectId(id) };
+                const update = {
+                    $set: {
+                        status: "paid",
+                        trackingId: trackingId
+                    }
+                }
+                const result = await bookedTicketCollection.updateOne(query, update);
+
+                const payment = {
+                    amount: session.amount_total / 100,
+                    currency: session.currency,
+                    customerEmail: session.customer_email,
+                    ticketId: session.metadata.ticketId,
+                    ticketTitle: session.metadata.ticketTitle,
+                    transactionId: session.payment_intent,
+                    paymentStatus: session.payment_status,
+                    paidAt: new Date(),
+                    trackingId: trackingId
+                }
+
+                if (session.payment_status === "paid") {
+                    const resultPayment = await paymentCollection.insertOne(payment);
+                    res.send({
+                        success: true,
+                        modifyTicket: result,
+                        trackingId: trackingId,
+                        transactionId: session.payment_intent,
+                        paymentInfo: resultPayment
+                    })
+                }
+
+                
+            }
+
+            return res.send({ success: false })
+        })
 
 
         // Send a ping to confirm a successful connection

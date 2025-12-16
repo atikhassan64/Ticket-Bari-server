@@ -123,14 +123,12 @@ async function run() {
         app.patch("/users/fraud/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
 
-            // 1️⃣ vendor খুঁজে বের করি
             const user = await userCollection.findOne({ _id: new ObjectId(id) });
 
             if (!user || user.role !== "vendor") {
                 return res.status(400).send({ message: "Invalid vendor" });
             }
 
-            // 2️⃣ user fraud করি
             const userUpdate = await userCollection.updateOne(
                 { _id: new ObjectId(id) },
                 {
@@ -141,7 +139,6 @@ async function run() {
                 }
             );
 
-            // 3️⃣ vendor এর সব ticket hide
             const ticketUpdate = await ticketsCollection.updateMany(
                 { vendorEmail: user.email },
                 { $set: { adminStatus: "fraud" } }
@@ -199,16 +196,15 @@ async function run() {
                     return res.status(404).send({ message: "Ticket not found" });
                 }
 
-                // ❌ Rejected ticket cannot be updated
+            
                 if (ticket.adminStatus === "rejected") {
                     return res.status(403).send({ message: "Rejected ticket cannot be updated" });
                 }
 
-                // ✅ Update ticket
                 const update = {
                     $set: {
                         ...updatedData,
-                        adminStatus: "pending", // reset admin approval
+                        adminStatus: "pending",
                         status: "pending"
                     }
                 };
@@ -221,7 +217,6 @@ async function run() {
                 res.send({ success: true, result });
 
             } catch (error) {
-                console.error(error);
                 res.status(500).send({ message: "Server error" });
             }
         });
@@ -362,6 +357,8 @@ async function run() {
             const result = await cursor.toArray();
             res.send(result);
         })
+
+        
 
         // Accept booking
         app.patch("/requested-bookings/:id/accept", verifyToken, async (req, res) => {

@@ -95,6 +95,28 @@ async function run() {
             res.send(result);
         });
 
+        // Update user profile
+        app.patch("/users/profile/:email", verifyToken, async (req, res) => {
+            const email = req.params.email;
+            const updatedInfo = req.body;
+
+            if (email !== req.decoded_email) {
+                return res.status(403).send({ message: "Forbidden access" });
+            }
+            const updateDoc = {
+                $set: {
+                    displayName: updatedInfo.displayName,
+                    photoURL: updatedInfo.photoURL
+                }
+            };
+            const result = await userCollection.updateOne(
+                { email },
+                updateDoc
+            );
+            res.send(result);
+        });
+
+
         // Make Admin
         app.patch("/users/admin/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
@@ -196,7 +218,7 @@ async function run() {
                     return res.status(404).send({ message: "Ticket not found" });
                 }
 
-            
+
                 if (ticket.adminStatus === "rejected") {
                     return res.status(403).send({ message: "Rejected ticket cannot be updated" });
                 }
@@ -358,7 +380,7 @@ async function run() {
             res.send(result);
         })
 
-        
+
 
         // Accept booking
         app.patch("/requested-bookings/:id/accept", verifyToken, async (req, res) => {

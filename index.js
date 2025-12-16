@@ -74,7 +74,9 @@ async function run() {
         // user post related Api
         app.post("/users", async (req, res) => {
             const user = req.body;
-            user.role = "user";
+            const defaultAdminEmail = process.env.DEFAULT_ADMIN_EMAIL;
+
+            user.role = user.email === defaultAdminEmail ? "admin" : "user";
             user.createAt = new Date();
             user.isFraud = false;
             const email = user.email;
@@ -88,13 +90,13 @@ async function run() {
         })
 
         // Get all users
-        app.get("/users", async (req, res) => {
+        app.get("/users", verifyToken, async (req, res) => {
             const result = await userCollection.find().toArray();
             res.send(result);
         });
 
         // Make Admin
-        app.patch("/users/admin/:id", async (req, res) => {
+        app.patch("/users/admin/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
 
             const result = await userCollection.updateOne(
@@ -106,7 +108,7 @@ async function run() {
         });
 
         // Make Vendor
-        app.patch("/users/vendor/:id", async (req, res) => {
+        app.patch("/users/vendor/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
 
             const result = await userCollection.updateOne(
@@ -118,7 +120,7 @@ async function run() {
         });
 
         // Mark Vendor as Fraud
-        app.patch("/users/fraud/:id", async (req, res) => {
+        app.patch("/users/fraud/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
 
             // 1️⃣ vendor খুঁজে বের করি
@@ -167,7 +169,7 @@ async function run() {
 
 
         // tickets post Api
-        app.post("/tickets", async (req, res) => {
+        app.post("/tickets", verifyToken, async (req, res) => {
             const tickets = req.body;
             tickets.isAdvertised = false;
 
@@ -186,7 +188,7 @@ async function run() {
         });
 
         // tickets get api for admin
-        app.get("/tickets/admin", async (req, res) => {
+        app.get("/tickets/admin", verifyToken, async (req, res) => {
             const query = {};
             const { email } = req.query;
             if (email) {
@@ -247,9 +249,16 @@ async function run() {
 
 
         // PATCH /tickets/advertise/:id
-        app.patch("/tickets/advertise/:id", async (req, res) => {
+        app.patch("/tickets/advertise/:id", verifyToken, async (req, res) => {
             const ticketId = req.params.id;
             const { isAdvertised } = req.body;
+
+            const email = req.decoded_email;
+            const user = await userCollection.findOne({ email });
+
+            if (user?.role !== "admin") {
+                return res.status(403).send({ message: "Only admin can advertise tickets" });
+            }
 
             const advertisedCount = await ticketsCollection.countDocuments({ isAdvertised: true });
 
@@ -267,7 +276,7 @@ async function run() {
 
 
         // tickets delete api by id
-        app.delete("/tickets/:id", async (req, res) => {
+        app.delete("/tickets/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
             const result = await ticketsCollection.deleteOne(query);
@@ -294,7 +303,7 @@ async function run() {
         })
 
         // my booked tickets post Api
-        app.post("/ticket-booked", async (req, res) => {
+        app.post("/ticket-booked", verifyToken, async (req, res) => {
             const bookedTicket = req.body;
             bookedTicket.status = "pending";
             bookedTicket.createAt = new Date();
@@ -303,7 +312,7 @@ async function run() {
         })
 
         // my booked tickets get api
-        app.get("/ticket-booked", async (req, res) => {
+        app.get("/ticket-booked", verifyToken, async (req, res) => {
             const query = {}
             const { email } = req.query;
             if (email) {
@@ -315,7 +324,7 @@ async function run() {
         })
 
         // Accept booking
-        app.patch("/requested-bookings/:id/accept", async (req, res) => {
+        app.patch("/requested-bookings/:id/accept", verifyToken, async (req, res) => {
             const id = req.params.id;
             const result = await bookedTicketCollection.updateOne(
                 { _id: new ObjectId(id) },
@@ -331,7 +340,7 @@ async function run() {
         });
 
         // Reject booking
-        app.patch("/requested-bookings/:id/reject", async (req, res) => {
+        app.patch("/requested-bookings/:id/reject", verifyToken, async (req, res) => {
             const id = req.params.id;
             const result = await bookedTicketCollection.updateOne(
                 { _id: new ObjectId(id) },
@@ -515,7 +524,7 @@ async function run() {
 
         // Admin related api
         // ticket approve relate api
-        app.patch("/tickets/approved/:id", async (req, res) => {
+        app.patch("/tickets/approved/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
 
             const result = await ticketsCollection.updateOne(
@@ -532,7 +541,7 @@ async function run() {
 
 
         // tickets reject related api
-        app.patch("/tickets/rejected/:id", async (req, res) => {
+        app.patch("/tickets/rejected/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
 
             const result = await ticketsCollection.updateOne(
@@ -546,10 +555,6 @@ async function run() {
 
             res.send(result);
         });
-
-
-
-
 
 
 

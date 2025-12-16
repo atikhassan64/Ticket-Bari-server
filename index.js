@@ -5,8 +5,16 @@ require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET);
 const port = process.env.PORT || 5000;
-
 const crypto = require("crypto");
+
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./ticket-bari-firebase-adminsdk.json");
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
+
 
 function generateTrackingId() {
     const prefix = "PRCL";
@@ -20,6 +28,26 @@ function generateTrackingId() {
 // middleware
 app.use(express.json());
 app.use(cors());
+
+const verifyToken = async (req, res, next) => {
+    const token = req.headers.authorization;
+    if (!token) {
+        return res.status(401).send({ message: "unauthorized access" })
+    }
+
+    try {
+        const idToken = token.split(" ")[1];
+        const decoded = await admin.auth().verifyIdToken(idToken);
+        console.log("decoded id: ", decoded);
+        req.decoded_email = decoded.email;
+        next();
+    }
+    catch (err) {
+        return res.status(401).send({ message: "unauthorized access" });
+    }
+
+}
+
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yc6y96u.mongodb.net/?appName=Cluster0`;
 
@@ -59,6 +87,71 @@ async function run() {
             res.send(result);
         })
 
+        // Get all users
+        app.get("/users", async (req, res) => {
+            const result = await userCollection.find().toArray();
+            res.send(result);
+        });
+
+        // Make Admin
+        app.patch("/users/admin/:id", async (req, res) => {
+            const id = req.params.id;
+
+            const result = await userCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role: "admin" } }
+            );
+
+            res.send(result);
+        });
+
+        // Make Vendor
+        app.patch("/users/vendor/:id", async (req, res) => {
+            const id = req.params.id;
+
+            const result = await userCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role: "vendor", status: "active" } }
+            );
+
+            res.send(result);
+        });
+
+        // Mark Vendor as Fraud
+        app.patch("/users/fraud/:id", async (req, res) => {
+            const id = req.params.id;
+
+            // 1️⃣ vendor খুঁজে বের করি
+            const user = await userCollection.findOne({ _id: new ObjectId(id) });
+
+            if (!user || user.role !== "vendor") {
+                return res.status(400).send({ message: "Invalid vendor" });
+            }
+
+            // 2️⃣ user fraud করি
+            const userUpdate = await userCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        isFraud: true,
+                        status: "fraud"
+                    }
+                }
+            );
+
+            // 3️⃣ vendor এর সব ticket hide
+            const ticketUpdate = await ticketsCollection.updateMany(
+                { vendorEmail: user.email },
+                { $set: { adminStatus: "fraud" } }
+            );
+
+            res.send({
+                success: true,
+                userUpdate,
+                ticketUpdate
+            });
+        });
+
         // user get related api
         app.get("/users/:email", async (req, res) => {
             const email = req.params.email;
@@ -76,9 +169,34 @@ async function run() {
         // tickets post Api
         app.post("/tickets", async (req, res) => {
             const tickets = req.body;
+            tickets.isAdvertised = false;
+
+            const vendor = await userCollection.findOne({
+                email: tickets.vendorEmail
+            });
+
+            if (vendor?.isFraud === true) {
+                return res.status(403).send({
+                    message: "Fraud vendor cannot add tickets"
+                });
+            }
+
             const result = await ticketsCollection.insertOne(tickets);
             res.send(result);
-        })
+        });
+
+        // tickets get api for admin
+        app.get("/tickets/admin", async (req, res) => {
+            const query = {};
+            const { email } = req.query;
+            if (email) {
+                query.vendorEmail = email;
+            }
+
+            const cursor = ticketsCollection.find(query).sort({ departure: -1 });
+            const result = await cursor.toArray();
+            res.send(result);
+        });
 
         // tickets get api by email
         app.get("/tickets", async (req, res) => {
@@ -87,6 +205,9 @@ async function run() {
             if (email) {
                 query.vendorEmail = email;
             }
+
+            query.adminStatus = "approved";
+
 
             const cursor = ticketsCollection.find(query);
             const result = await cursor.toArray();
@@ -97,9 +218,53 @@ async function run() {
         app.get("/tickets/:id", async (req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id) };
+
+            query.adminStatus = "approved";
+
             const result = await ticketsCollection.findOne(query);
             res.send(result)
         })
+
+        // advertise tickets get api
+        app.get("/tickets/advertise", async (req, res) => {
+            const query = { adminStatus: "approved" };
+
+            const { email, isAdvertised } = req.query;
+
+
+            if (email) {
+                query.vendorEmail = email;
+            }
+
+
+            if (isAdvertised) {
+                query.isAdvertised = isAdvertised === "true";
+            }
+
+            const tickets = await ticketsCollection.find(query).sort({ departure: -1 }).toArray();
+            res.send(tickets);
+        });
+
+
+        // PATCH /tickets/advertise/:id
+        app.patch("/tickets/advertise/:id", async (req, res) => {
+            const ticketId = req.params.id;
+            const { isAdvertised } = req.body;
+
+            const advertisedCount = await ticketsCollection.countDocuments({ isAdvertised: true });
+
+            if (isAdvertised && advertisedCount >= 6) {
+                return res.send({ success: false, message: "Maximum 6 tickets can be advertised" });
+            }
+
+            const result = await ticketsCollection.updateOne(
+                { _id: new ObjectId(ticketId) },
+                { $set: { isAdvertised: isAdvertised } }
+            );
+
+            res.send(result);
+        });
+
 
         // tickets delete api by id
         app.delete("/tickets/:id", async (req, res) => {
@@ -288,11 +453,10 @@ async function run() {
 
             const trackingId = generateTrackingId();
 
-            // ✅ ATOMIC update (ONLY if not already paid)
             const updateResult = await bookedTicketCollection.updateOne(
                 {
                     _id: new ObjectId(ticketId),
-                    status: { $ne: "paid" }   // 🔥 KEY LINE
+                    status: { $ne: "paid" }
                 },
                 {
                     $set: {
@@ -330,18 +494,63 @@ async function run() {
             });
         });
 
-
         // payment get related api
-        app.get("/payments", async (req, res) => {
+        app.get("/payments", verifyToken, async (req, res) => {
             const email = req.query.email;
             const query = {}
+
             if (email) {
-                query.customerEmail = email
+                query.customerEmail = email;
+
+                // check email address
+                if (email !== req.decoded_email) {
+                    return res.status(403).send({ message: "forbidden access" })
+                }
             }
-            const cursor = paymentCollection.find(query);
+            const cursor = paymentCollection.find(query).sort({ paidAt: -1 });
             const result = await cursor.toArray();
             res.send(result);
         })
+
+
+        // Admin related api
+        // ticket approve relate api
+        app.patch("/tickets/approved/:id", async (req, res) => {
+            const id = req.params.id;
+
+            const result = await ticketsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        adminStatus: "approved"
+                    }
+                }
+            );
+
+            res.send(result);
+        });
+
+
+        // tickets reject related api
+        app.patch("/tickets/rejected/:id", async (req, res) => {
+            const id = req.params.id;
+
+            const result = await ticketsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                    $set: {
+                        adminStatus: "rejected"
+                    }
+                }
+            );
+
+            res.send(result);
+        });
+
+
+
+
+
 
 
         // Send a ping to confirm a successful connection

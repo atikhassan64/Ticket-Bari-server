@@ -187,6 +187,46 @@ async function run() {
             res.send(result);
         });
 
+        // Update ticket by id
+        app.patch("/tickets/:id", verifyToken, async (req, res) => {
+            const id = req.params.id;
+            const updatedData = req.body;
+
+            try {
+                const ticket = await ticketsCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!ticket) {
+                    return res.status(404).send({ message: "Ticket not found" });
+                }
+
+                // ❌ Rejected ticket cannot be updated
+                if (ticket.adminStatus === "rejected") {
+                    return res.status(403).send({ message: "Rejected ticket cannot be updated" });
+                }
+
+                // ✅ Update ticket
+                const update = {
+                    $set: {
+                        ...updatedData,
+                        adminStatus: "pending", // reset admin approval
+                        status: "pending"
+                    }
+                };
+
+                const result = await ticketsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    update
+                );
+
+                res.send({ success: true, result });
+
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Server error" });
+            }
+        });
+
+
         // tickets get api for admin
         app.get("/tickets/admin", verifyToken, async (req, res) => {
             const query = {};

@@ -116,7 +116,6 @@ async function run() {
             res.send(result);
         });
 
-
         // Make Admin
         app.patch("/users/admin/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
@@ -185,8 +184,6 @@ async function run() {
             res.send(user);
         })
 
-
-
         // tickets post Api
         app.post("/tickets", verifyToken, async (req, res) => {
             const tickets = req.body;
@@ -243,7 +240,6 @@ async function run() {
             }
         });
 
-
         // tickets get api for admin
         app.get("/tickets/admin", verifyToken, async (req, res) => {
             const query = {};
@@ -258,20 +254,44 @@ async function run() {
         });
 
         // tickets get api by email
+        // app.get("/tickets", async (req, res) => {
+        //     const query = {}
+        //     const { email } = req.query;
+        //     if (email) {
+        //         query.vendorEmail = email;
+        //     }
+
+        //     query.adminStatus = "approved";
+
+
+        //     const cursor = ticketsCollection.find(query);
+        //     const result = await cursor.toArray();
+        //     res.send(result);
+        // })
+
+        // tickets get api by email (LATEST FIRST)
         app.get("/tickets", async (req, res) => {
-            const query = {}
-            const { email } = req.query;
-            if (email) {
-                query.vendorEmail = email;
+            try {
+                const query = {};
+                const { email } = req.query;
+
+                if (email) {
+                    query.vendorEmail = email;
+                }
+
+                query.adminStatus = "approved";
+
+                const result = await ticketsCollection
+                    .find(query)
+                    .sort({ _id: -1 }) // 🔴 Latest tickets first
+                    .toArray();
+
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch tickets" });
             }
+        });
 
-            query.adminStatus = "approved";
-
-
-            const cursor = ticketsCollection.find(query);
-            const result = await cursor.toArray();
-            res.send(result);
-        })
 
         // tickets get api by id
         app.get("/tickets/:id", async (req, res) => {
@@ -285,23 +305,34 @@ async function run() {
         })
 
         // advertise tickets get api
+        // app.get("/tickets/advertise", async (req, res) => {
+        //     const query = { adminStatus: "approved" };
+
+        //     const { email, isAdvertised } = req.query;
+
+
+        //     if (email) {
+        //         query.vendorEmail = email;
+        //     }
+
+
+        //     if (isAdvertised) {
+        //         query.isAdvertised = isAdvertised === "true";
+        //     }
+
+        //     const tickets = await ticketsCollection.find(query).sort({ departure: -1 }).toArray();
+        //     res.send(tickets);
+        // });
+
         app.get("/tickets/advertise", async (req, res) => {
-            const query = { adminStatus: "approved" };
-
-            const { email, isAdvertised } = req.query;
-
-
-            if (email) {
-                query.vendorEmail = email;
+            try {
+                const query = { adminStatus: "approved", isAdvertised: true };
+                const tickets = await ticketsCollection.find(query).sort({ departure: -1 }).toArray();
+                res.send(tickets);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ message: "Internal Server Error" });
             }
-
-
-            if (isAdvertised) {
-                query.isAdvertised = isAdvertised === "true";
-            }
-
-            const tickets = await ticketsCollection.find(query).sort({ departure: -1 }).toArray();
-            res.send(tickets);
         });
 
 
@@ -330,7 +361,6 @@ async function run() {
 
             res.send(result);
         });
-
 
         // tickets delete api by id
         app.delete("/tickets/:id", verifyToken, async (req, res) => {
@@ -381,7 +411,6 @@ async function run() {
         })
 
 
-
         // Accept booking
         app.patch("/requested-bookings/:id/accept", verifyToken, async (req, res) => {
             const id = req.params.id;
@@ -412,7 +441,6 @@ async function run() {
             );
             res.send(result);
         });
-
 
         // payment related api 
         app.post("/payment", async (req, res) => {
@@ -580,7 +608,6 @@ async function run() {
             res.send(result);
         })
 
-
         // Admin related api
         // ticket approve relate api
         app.patch("/tickets/approved/:id", verifyToken, async (req, res) => {
@@ -598,7 +625,6 @@ async function run() {
             res.send(result);
         });
 
-
         // tickets reject related api
         app.patch("/tickets/rejected/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
@@ -614,8 +640,6 @@ async function run() {
 
             res.send(result);
         });
-
-
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });

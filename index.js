@@ -39,7 +39,7 @@ const verifyToken = async (req, res, next) => {
     try {
         const idToken = token.split(" ")[1];
         const decoded = await admin.auth().verifyIdToken(idToken);
-        console.log("decoded id: ", decoded);
+        // console.log("decoded id: ", decoded);
         req.decoded_email = decoded.email;
         next();
     }
@@ -570,7 +570,6 @@ async function run() {
             res.send(result);
         });
 
-
         // tickets reject related api
         app.patch("/tickets/rejected/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
@@ -602,5 +601,5 @@ app.get("/", (req, res) => {
 })
 
 app.listen(port, () => {
-    console.log(`Ticket Bari is running Port ${port}`)
+    // console.log(`Ticket Bari is running Port ${port}`)
 })

@@ -9,7 +9,8 @@ const crypto = require("crypto");
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./ticket-bari-firebase-adminsdk.json");
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
@@ -253,22 +254,6 @@ async function run() {
             res.send(result);
         });
 
-        // tickets get api by email
-        // app.get("/tickets", async (req, res) => {
-        //     const query = {}
-        //     const { email } = req.query;
-        //     if (email) {
-        //         query.vendorEmail = email;
-        //     }
-
-        //     query.adminStatus = "approved";
-
-
-        //     const cursor = ticketsCollection.find(query);
-        //     const result = await cursor.toArray();
-        //     res.send(result);
-        // })
-
         // tickets get api by email (LATEST FIRST)
         app.get("/tickets", async (req, res) => {
             try {
@@ -283,7 +268,7 @@ async function run() {
 
                 const result = await ticketsCollection
                     .find(query)
-                    .sort({ _id: -1 }) // 🔴 Latest tickets first
+                    .sort({ _id: -1 })
                     .toArray();
 
                 res.send(result);
@@ -305,25 +290,6 @@ async function run() {
         })
 
         // advertise tickets get api
-        // app.get("/tickets/advertise", async (req, res) => {
-        //     const query = { adminStatus: "approved" };
-
-        //     const { email, isAdvertised } = req.query;
-
-
-        //     if (email) {
-        //         query.vendorEmail = email;
-        //     }
-
-
-        //     if (isAdvertised) {
-        //         query.isAdvertised = isAdvertised === "true";
-        //     }
-
-        //     const tickets = await ticketsCollection.find(query).sort({ departure: -1 }).toArray();
-        //     res.send(tickets);
-        // });
-
         app.get("/tickets/advertise", async (req, res) => {
             try {
                 const query = { adminStatus: "approved", isAdvertised: true };
@@ -413,47 +379,86 @@ async function run() {
 
         // Accept booking
         app.patch("/requested-bookings/:id/accept", verifyToken, async (req, res) => {
-            const id = req.params.id;
-            const result = await bookedTicketCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { status: "accepted" } }
-            );
-            // Optionally update bookedTicketCollection too
-            const requested = await bookedTicketCollection.findOne({ _id: new ObjectId(id) });
-            await bookedTicketCollection.updateOne(
-                { _id: new ObjectId(requested.ticketId) },
-                { $set: { status: "accepted" } }
-            );
-            res.send(result);
+            try {
+                const id = req.params.id;
+
+                const booking = await bookedTicketCollection.findOne({ _id: new ObjectId(id) });
+                if (!booking) return res.status(404).send({ message: "Booking not found" });
+
+                if (booking.vendorEmail !== req.decoded_email)
+                    return res.status(403).send({ message: "Forbidden access" });
+
+                if (booking.status === "accepted")
+                    return res.send({ message: "Already accepted" });
+
+                const ticket = await ticketsCollection.findOne({ _id: new ObjectId(booking.ticketId) });
+                if (!ticket) return res.status(404).send({ message: "Ticket not found" });
+
+                if (ticket.quantity < booking.bookingQty)
+                    return res.status(400).send({ message: "Not enough tickets available" });
+
+                await ticketsCollection.updateOne(
+                    { _id: ticket._id },
+                    { $inc: { quantity: -booking.bookingQty } }
+                );
+
+                const result = await bookedTicketCollection.updateOne(
+                    { _id: booking._id },
+                    { $set: { status: "accepted" } }
+                );
+
+                res.send({ success: true, result });
+
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Internal server error" });
+            }
         });
 
         // Reject booking
         app.patch("/requested-bookings/:id/reject", verifyToken, async (req, res) => {
-            const id = req.params.id;
-            const result = await bookedTicketCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { status: "rejected" } }
-            );
-            const requested = await bookedTicketCollection.findOne({ _id: new ObjectId(id) });
-            await bookedTicketCollection.updateOne(
-                { _id: new ObjectId(requested.ticketId) },
-                { $set: { status: "rejected" } }
-            );
-            res.send(result);
+            try {
+                const id = req.params.id;
+
+                const booking = await bookedTicketCollection.findOne({ _id: new ObjectId(id) });
+                if (!booking) return res.status(404).send({ message: "Booking not found" });
+
+                if (booking.vendorEmail !== req.decoded_email)
+                    return res.status(403).send({ message: "Forbidden access" });
+
+                // Increase ticket quantity back if booking was accepted before
+                if (booking.status === "accepted") {
+                    const ticket = await ticketsCollection.findOne({ _id: new ObjectId(booking.ticketId) });
+                    if (ticket) {
+                        await ticketsCollection.updateOne(
+                            { _id: ticket._id },
+                            { $inc: { quantity: booking.bookingQty } }
+                        );
+                    }
+                }
+
+                const result = await bookedTicketCollection.updateOne(
+                    { _id: booking._id },
+                    { $set: { status: "rejected" } }
+                );
+
+                res.send({ success: true, result });
+
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Internal server error" });
+            }
         });
 
         // payment related api 
         app.post("/payment", async (req, res) => {
             const paymentInfo = req.body;
-            // const amount = parseInt(paymentInfo.totalPrice);
-            // const amount = Math.round(parseFloat(paymentInfo.totalPrice));
             const amount = Math.round(parseFloat(paymentInfo.totalPrice) * 100);
             const quantity = parseInt(paymentInfo.bookingQty);
 
             const session = await stripe.checkout.sessions.create({
                 line_items: [
                     {
-                        // Provide the exact Price ID (for example, price_1234) of the product you want to sell
                         price_data: {
                             currency: "usd",
                             unit_amount: amount,
@@ -478,64 +483,6 @@ async function run() {
         })
 
         // payment success 
-        // app.patch("/payment-success", async (req, res) => {
-        //     const sessionId = req.query.session_id;
-        //     const session = await stripe.checkout.sessions.retrieve(sessionId);
-        //     // console.log("session retrieve : ", session);
-
-        //     const transactionId = session.payment_intent;
-        //     const query = { transactionId: transactionId }
-        //     const paymentExist = await paymentCollection.findOne(query);
-        //     if (paymentExist) {
-        //         return res.send({
-        //             message: "already exist",
-        //             transactionId: transactionId,
-        //             trackingId: paymentExist.trackingId
-        //         })
-        //     }
-
-        //     const trackingId = generateTrackingId();
-
-        //     if (session.payment_status === "paid") {
-        //         const id = session.metadata.ticketId;
-        //         const query = { _id: new ObjectId(id) };
-        //         const update = {
-        //             $set: {
-        //                 status: "paid",
-        //                 trackingId: trackingId
-        //             }
-        //         }
-        //         const result = await bookedTicketCollection.updateOne(query, update);
-
-        //         const payment = {
-        //             amount: session.amount_total / 100,
-        //             currency: session.currency,
-        //             customerEmail: session.customer_email,
-        //             ticketId: session.metadata.ticketId,
-        //             ticketTitle: session.metadata.ticketTitle,
-        //             transactionId: session.payment_intent,
-        //             paymentStatus: session.payment_status,
-        //             paidAt: new Date(),
-        //             trackingId: trackingId
-        //         }
-
-        //         if (session.payment_status === "paid") {
-        //             const resultPayment = await paymentCollection.insertOne(payment);
-        //             res.send({
-        //                 success: true,
-        //                 modifyTicket: result,
-        //                 trackingId: trackingId,
-        //                 transactionId: session.payment_intent,
-        //                 paymentInfo: resultPayment
-        //             })
-        //         }
-
-
-        //     }
-
-        //     return res.send({ success: false })
-        // })
-
         app.patch("/payment-success", async (req, res) => {
             const sessionId = req.query.session_id;
             const session = await stripe.checkout.sessions.retrieve(sessionId);
@@ -597,8 +544,6 @@ async function run() {
 
             if (email) {
                 query.customerEmail = email;
-
-                // check email address
                 if (email !== req.decoded_email) {
                     return res.status(403).send({ message: "forbidden access" })
                 }
@@ -625,6 +570,7 @@ async function run() {
             res.send(result);
         });
 
+
         // tickets reject related api
         app.patch("/tickets/rejected/:id", verifyToken, async (req, res) => {
             const id = req.params.id;
@@ -642,8 +588,8 @@ async function run() {
         });
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();

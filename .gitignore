@@ -1,3 +1,4 @@
 node_modules
 ticket-bari-firebase-adminsdk.json
 .env
+.vercel

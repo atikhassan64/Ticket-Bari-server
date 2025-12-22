@@ -50,7 +50,7 @@ const verifyToken = async (req, res, next) => {
 }
 
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.yc6y96u.mongodb.net/?appName=Cluster0`;
+const uri = `${process.env.DB_URI}`;
 
 const client = new MongoClient(uri, {
     serverApi: {
@@ -64,7 +64,7 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
 
         const db = client.db("ticket_bari");
         const userCollection = db.collection("users");
